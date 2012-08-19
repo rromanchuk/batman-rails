@@ -3812,7 +3812,7 @@
         path = this.pathFromValue(value);
       }
       if (this.onATag) {
-        if (path != null) {
+        if ((path != null) && (Batman.navigator != null)) {
           path = Batman.navigator.linkTo(path);
         } else {
           path = "#";
@@ -3850,20 +3850,28 @@
       return RadioBinding.__super__.constructor.apply(this, arguments);
     }
 
-    RadioBinding.prototype.isInputBinding = true;
+    RadioBinding.accessor('parsedNodeValue', function() {
+      return Batman.DOM.attrReaders._parseAttribute(this.node.value);
+    });
+
+    RadioBinding.prototype.firstBind = true;
 
     RadioBinding.prototype.dataChange = function(value) {
       var boundValue;
-      if ((boundValue = this.get('filteredValue')) != null) {
-        return this.node.checked = boundValue === this.node.value;
-      } else if (this.node.checked) {
-        return this.set('filteredValue', this.node.value);
+      boundValue = this.get('filteredValue');
+      if (boundValue != null) {
+        this.node.checked = boundValue === Batman.DOM.attrReaders._parseAttribute(this.node.value);
+      } else {
+        if (this.firstBind && this.node.checked) {
+          this.set('filteredValue', this.get('parsedNodeValue'));
+        }
       }
+      return this.firstBind = false;
     };
 
     RadioBinding.prototype.nodeChange = function(node) {
       if (this.isTwoWay()) {
-        return this.set('filteredValue', Batman.DOM.attrReaders._parseAttribute(node.value));
+        return this.set('filteredValue', this.get('parsedNodeValue'));
       }
     };
 
@@ -4999,7 +5007,7 @@
     };
 
     RestStorage.prototype._defaultCollectionUrl = function(model) {
-      return "/" + (this.storageKey(model.prototype));
+      return "" + (this.storageKey(model.prototype));
     };
 
     RestStorage.prototype._addParams = function(url, options) {
@@ -5008,6 +5016,27 @@
         url += '/' + options.action.toLowerCase();
       }
       return url;
+    };
+
+    RestStorage.prototype._addUrlAffixes = function(url, subject, env) {
+      var prefix, segments;
+      segments = [url, this.urlSuffix(subject, env)];
+      if (url.charAt(0) !== '/') {
+        prefix = this.urlPrefix(subject, env);
+        if (prefix.charAt(prefix.length - 1) !== '/') {
+          segments.unshift('/');
+        }
+        segments.unshift(prefix);
+      }
+      return segments.join('');
+    };
+
+    RestStorage.prototype.urlPrefix = function(object, env) {
+      return this._execWithOptions(object, 'urlPrefix', env.options) || '';
+    };
+
+    RestStorage.prototype.urlSuffix = function(object, env) {
+      return this._execWithOptions(object, 'urlSuffix', env.options) || '';
     };
 
     RestStorage.prototype.urlForRecord = function(record, env) {
@@ -5024,23 +5053,13 @@
           }
         }
       }
-      url = this._addParams(url, env.options);
-      return this.urlPrefix(record, env) + url + this.urlSuffix(record, env);
+      return this._addUrlAffixes(this._addParams(url, env.options), record, env);
     };
 
     RestStorage.prototype.urlForCollection = function(model, env) {
       var url;
       url = model.url ? this._execWithOptions(model, 'url', env.options) : this._defaultCollectionUrl(model, env.options);
-      url = this._addParams(url, env.options);
-      return this.urlPrefix(model, env) + url + this.urlSuffix(model, env);
-    };
-
-    RestStorage.prototype.urlPrefix = function(object, env) {
-      return this._execWithOptions(object, 'urlPrefix', env.options) || '';
-    };
-
-    RestStorage.prototype.urlSuffix = function(object, env) {
-      return this._execWithOptions(object, 'urlSuffix', env.options) || '';
+      return this._addUrlAffixes(this._addParams(url, env.options), model, env);
     };
 
     RestStorage.prototype.request = function(env, next) {
@@ -5781,9 +5800,9 @@
 
     __extends(Model, _super);
 
-    Model.primaryKey = 'id';
-
     Model.storageKey = null;
+
+    Model.primaryKey = 'id';
 
     Model.persist = function(mechanism, options) {
       Batman.initializeObject(this.prototype);
@@ -5801,11 +5820,10 @@
     };
 
     Model.encode = function() {
-      var encoder, encoderOrLastKey, hash, key, keys, operation, _base, _base1, _i, _j, _k, _len, _len1, _ref;
+      var encoder, encoderForKey, encoderOrLastKey, key, keys, _base, _i, _j, _len;
       keys = 2 <= arguments.length ? __slice.call(arguments, 0, _i = arguments.length - 1) : (_i = 0, []), encoderOrLastKey = arguments[_i++];
       Batman.initializeObject(this.prototype);
       (_base = this.prototype._batman).encoders || (_base.encoders = new Batman.SimpleHash);
-      (_base1 = this.prototype._batman).decoders || (_base1.decoders = new Batman.SimpleHash);
       encoder = {};
       switch (Batman.typeOf(encoderOrLastKey)) {
         case 'String':
@@ -5815,26 +5833,14 @@
           encoder.encode = encoderOrLastKey;
           break;
         default:
-          if (encoderOrLastKey.encode != null) {
-            encoder.encode = encoderOrLastKey.encode;
-          }
-          if (encoderOrLastKey.decode != null) {
-            encoder.decode = encoderOrLastKey.decode;
-          }
+          encoder = encoderOrLastKey;
       }
-      encoder = Batman.extend({}, this.defaultEncoder, encoder);
-      _ref = ['encode', 'decode'];
-      for (_j = 0, _len = _ref.length; _j < _len; _j++) {
-        operation = _ref[_j];
-        for (_k = 0, _len1 = keys.length; _k < _len1; _k++) {
-          key = keys[_k];
-          hash = this.prototype._batman["" + operation + "rs"];
-          if (encoder[operation]) {
-            hash.set(key, encoder[operation]);
-          } else {
-            hash.unset(key);
-          }
-        }
+      for (_j = 0, _len = keys.length; _j < _len; _j++) {
+        key = keys[_j];
+        encoderForKey = Batman.extend({
+          as: key
+        }, this.defaultEncoder, encoder);
+        this.prototype._batman.encoders.set(key, encoderForKey);
       }
     };
 
@@ -5859,7 +5865,7 @@
     });
 
     Model.validate = function() {
-      var keys, match, matches, options, optionsOrFunction, validator, validators, _base, _i, _j, _k, _len, _len1, _ref, _results;
+      var keys, matches, optionsOrFunction, validatorClass, validators, _base, _i, _j, _len, _ref, _results;
       keys = 2 <= arguments.length ? __slice.call(arguments, 0, _i = arguments.length - 1) : (_i = 0, []), optionsOrFunction = arguments[_i++];
       Batman.initializeObject(this.prototype);
       validators = (_base = this.prototype._batman).validators || (_base.validators = []);
@@ -5869,19 +5875,14 @@
           callback: optionsOrFunction
         });
       } else {
-        options = optionsOrFunction;
         _ref = Batman.Validators;
         _results = [];
         for (_j = 0, _len = _ref.length; _j < _len; _j++) {
-          validator = _ref[_j];
-          if ((matches = validator.matches(options))) {
-            for (_k = 0, _len1 = matches.length; _k < _len1; _k++) {
-              match = matches[_k];
-              delete options[match];
-            }
+          validatorClass = _ref[_j];
+          if ((matches = validatorClass.matches(optionsOrFunction))) {
             _results.push(validators.push({
               keys: keys,
-              validator: new validator(matches)
+              validator: new validatorClass(matches)
             }));
           } else {
             _results.push(void 0);
@@ -6045,6 +6046,15 @@
         callback(void 0, foundRecord);
       }
       return record;
+    };
+
+    Model.createFromJSON = function(json) {
+      var record;
+      record = new this;
+      record._withoutDirtyTracking(function() {
+        return this.fromJSON(json);
+      });
+      return this._mapIdentity(record);
     };
 
     Model._mapIdentity = function(record) {
@@ -6245,11 +6255,13 @@
       if (!(!encoders || encoders.isEmpty())) {
         encoders.forEach(function(key, encoder) {
           var encodedVal, val;
-          val = _this.get(key);
-          if (typeof val !== 'undefined') {
-            encodedVal = encoder(val, key, obj, _this);
-            if (typeof encodedVal !== 'undefined') {
-              return obj[key] = encodedVal;
+          if (encoder.encode) {
+            val = _this.get(key);
+            if (typeof val !== 'undefined') {
+              encodedVal = encoder.encode(val, key, obj, _this);
+              if (typeof encodedVal !== 'undefined') {
+                return obj[encoder.as] = encodedVal;
+              }
             }
           }
         });
@@ -6258,19 +6270,21 @@
     };
 
     Model.prototype.fromJSON = function(data) {
-      var decoders, key, obj, value,
+      var encoders, key, obj, value,
         _this = this;
       obj = {};
-      decoders = this._batman.get('decoders');
-      if (!decoders || decoders.isEmpty()) {
+      encoders = this._batman.get('encoders');
+      if (!encoders || encoders.isEmpty() || !encoders.some(function(key, encoder) {
+        return encoder.decode != null;
+      })) {
         for (key in data) {
           value = data[key];
           obj[key] = value;
         }
       } else {
-        decoders.forEach(function(key, decoder) {
-          if (typeof data[key] !== 'undefined') {
-            return obj[key] = decoder(data[key], key, data, obj, _this);
+        encoders.forEach(function(key, encoder) {
+          if (encoder.decode && typeof data[encoder.as] !== 'undefined') {
+            return obj[key] = encoder.decode(data[encoder.as], encoder.as, data, obj, _this);
           }
         });
       }
@@ -6278,7 +6292,7 @@
         obj.id = data[this.constructor.primaryKey];
       }
       Batman.developer["do"](function() {
-        if ((!decoders) || decoders.length <= 1) {
+        if ((!encoders) || encoders.length <= 1) {
           return Batman.developer.warn("Warning: Model " + (Batman.functionName(_this.constructor)) + " has suspiciously few decoders!");
         }
       });
@@ -6340,35 +6354,25 @@
     };
 
     Model.prototype.save = function(options, callback) {
-      var endState, isNew, startState, storageOperation, _ref1, _ref2, _ref3,
+      var endState, isNew, startState, storageOperation, _ref1, _ref2,
         _this = this;
       if (!callback) {
         _ref1 = [{}, options], options = _ref1[0], callback = _ref1[1];
       }
-      if ((_ref2 = this.get('lifecycle').get('state')) === 'destroying' || _ref2 === 'destroyed') {
-        if (typeof callback === "function") {
-          callback(new Error("Can't save a destroyed record!"));
-        }
-        return;
-      }
       isNew = this.isNew();
-      _ref3 = isNew ? ['create', 'create', 'created'] : ['save', 'update', 'saved'], startState = _ref3[0], storageOperation = _ref3[1], endState = _ref3[2];
-      return this.validate(function(error, errors) {
-        var associations, creating;
-        if (error || errors.length) {
-          _this.get('lifecycle').failedValidation();
-          if (typeof callback === "function") {
-            callback(error || errors, _this);
+      _ref2 = isNew ? ['create', 'create', 'created'] : ['save', 'update', 'saved'], startState = _ref2[0], storageOperation = _ref2[1], endState = _ref2[2];
+      if (this.get('lifecycle').startTransition(startState)) {
+        return this.validate(function(error, errors) {
+          var associations;
+          if (error || errors.length) {
+            _this.get('lifecycle').failedValidation();
+            return typeof callback === "function" ? callback(error || errors, _this) : void 0;
           }
-          return;
-        }
-        creating = _this.isNew();
-        if (_this.get('lifecycle').startTransition(startState)) {
           associations = _this.constructor._batman.get('associations');
           _this._withoutDirtyTracking(function() {
-            var _ref4,
+            var _ref3,
               _this = this;
-            return associations != null ? (_ref4 = associations.getByType('belongsTo')) != null ? _ref4.forEach(function(association, label) {
+            return associations != null ? (_ref3 = associations.getByType('belongsTo')) != null ? _ref3.forEach(function(association, label) {
               return association.apply(_this);
             }) : void 0 : void 0;
           });
@@ -6380,13 +6384,13 @@
               _this.get('_dirtiedKeys').clear();
               if (associations) {
                 record._withoutDirtyTracking(function() {
-                  var _ref4, _ref5;
-                  if ((_ref4 = associations.getByType('hasOne')) != null) {
-                    _ref4.forEach(function(association, label) {
+                  var _ref3, _ref4;
+                  if ((_ref3 = associations.getByType('hasOne')) != null) {
+                    _ref3.forEach(function(association, label) {
                       return association.apply(err, record);
                     });
                   }
-                  return (_ref5 = associations.getByType('hasMany')) != null ? _ref5.forEach(function(association, label) {
+                  return (_ref4 = associations.getByType('hasMany')) != null ? _ref4.forEach(function(association, label) {
                     return association.apply(err, record);
                   }) : void 0;
                 });
@@ -6402,10 +6406,10 @@
             }
             return typeof callback === "function" ? callback(err, record || _this, env) : void 0;
           });
-        } else {
-          return typeof callback === "function" ? callback(new Batman.StateMachine.InvalidTransitionError("Can't save while in state " + (_this.get('lifecycle.state')))) : void 0;
-        }
-      });
+        });
+      } else {
+        return typeof callback === "function" ? callback(new Batman.StateMachine.InvalidTransitionError("Can't save while in state " + (this.get('lifecycle.state')))) : void 0;
+      }
     };
 
     Model.prototype.destroy = function(options, callback) {
@@ -6906,7 +6910,9 @@
       queryParam: '(?:\\?.+)?',
       namedOrSplat: /[:|\*]([\w\d]+)/g,
       namePrefix: '[:|\*]',
-      escapeRegExp: /[-[\]{}()+?.,\\^$|#\s]/g
+      escapeRegExp: /[-[\]{}+?.,\\^$|#\s]/g,
+      openOptParam: /\(/g,
+      closeOptParam: /\)/g
     };
 
     Route.prototype.optionKeys = ['member', 'collection'];
@@ -6922,7 +6928,7 @@
         templatePath = "/" + templatePath;
       }
       pattern = templatePath.replace(regexps.escapeRegExp, '\\$&');
-      regexp = RegExp("^" + (pattern.replace(regexps.namedParam, '([^\/]+)').replace(regexps.splatParam, '(.*?)')) + regexps.queryParam + "$");
+      regexp = RegExp("^" + (pattern.replace(regexps.openOptParam, '(?:').replace(regexps.closeOptParam, ')?').replace(regexps.namedParam, '([^\/]+)').replace(regexps.splatParam, '(.*?)')) + regexps.queryParam + "$");
       namedArguments = ((function() {
         var _results;
         _results = [];
@@ -6964,19 +6970,21 @@
     };
 
     Route.prototype.pathFromParams = function(argumentParams) {
-      var hash, key, name, newPath, params, path, query, regexp, _i, _j, _len, _len1, _ref, _ref1;
+      var hash, key, name, newPath, params, path, query, regexp, regexps, _i, _j, _len, _len1, _ref, _ref1;
       params = Batman.extend({}, argumentParams);
       path = this.get('templatePath');
+      regexps = this.constructor.regexps;
       _ref = this.get('namedArguments');
       for (_i = 0, _len = _ref.length; _i < _len; _i++) {
         name = _ref[_i];
-        regexp = RegExp("" + this.constructor.regexps.namePrefix + name);
+        regexp = RegExp("" + regexps.namePrefix + name);
         newPath = path.replace(regexp, (params[name] != null ? params[name] : ''));
         if (newPath !== path) {
           delete params[name];
           path = newPath;
         }
       }
+      path = path.replace(regexps.openOptParam, '').replace(regexps.closeOptParam, '').replace(/([^\/])\/+$/, '$1');
       _ref1 = this.testKeys;
       for (_j = 0, _len1 = _ref1.length; _j < _len1; _j++) {
         key = _ref1[_j];
@@ -7542,7 +7550,7 @@
       frame = this._actionFrames[this._actionFrames.length - 1];
       if (frame) {
         if (frame.operationOccurred) {
-          Batman.developer.warn("Warning! Trying to redirect but an action has already be taken during " + (this.get('routingKey')) + "." + (frame.action || this.get('action')));
+          Batman.developer.warn("Warning! Trying to redirect but an action has already been taken during " + (this.get('routingKey')) + "." + (frame.action || this.get('action')));
         }
         frame.startAndFinishOperation();
         if (this._afterFilterRedirect != null) {
@@ -10273,14 +10281,10 @@
       return function(data, _, __, ___, parentRecord) {
         var record, relatedModel;
         relatedModel = association.getRelatedModel();
-        record = new relatedModel();
-        record._withoutDirtyTracking(function() {
-          return this.fromJSON(data);
-        });
+        record = relatedModel.createFromJSON(data);
         if (association.options.inverseOf) {
           record.set(association.options.inverseOf, parentRecord);
         }
-        record = relatedModel._mapIdentity(record);
         return record;
       };
     };
@@ -10340,11 +10344,7 @@
       return function(data, _, __, ___, childRecord) {
         var inverse, record, relatedModel;
         relatedModel = association.getRelatedModel();
-        record = new relatedModel();
-        record._withoutDirtyTracking(function() {
-          return this.fromJSON(data);
-        });
-        record = relatedModel._mapIdentity(record);
+        record = relatedModel.createFromJSON(data);
         if (association.options.inverseOf) {
           if (inverse = association.inverse()) {
             if (inverse instanceof Batman.HasManyAssociation) {
@@ -10457,7 +10457,7 @@
       }
       Batman.developer["do"](function() {
         if ((Batman.currentApp != null) && !relatedModel) {
-          return Batman.developer.warn("Related model " + type + " for polymorhic association not found.");
+          return Batman.developer.warn("Related model " + type + " for polymorphic association not found.");
         }
       });
       return relatedModel;
@@ -10493,11 +10493,7 @@
         var foreignTypeValue, inverse, record, relatedModel;
         foreignTypeValue = response[association.foreignTypeKey] || childRecord.get(association.foreignTypeKey);
         relatedModel = association.getRelatedModelForType(foreignTypeValue);
-        record = new relatedModel();
-        record._withoutDirtyTracking(function() {
-          return this.fromJSON(data);
-        });
-        record = relatedModel._mapIdentity(record);
+        record = relatedModel.createFromJSON(data);
         if (association.options.inverseOf) {
           if (inverse = association.inverseForType(foreignTypeValue)) {
             if (inverse instanceof Batman.PolymorphicHasManyAssociation) {
@@ -10528,6 +10524,45 @@
 
     __extends(Validator, _super);
 
+    Validator.triggers = function() {
+      var triggers;
+      triggers = 1 <= arguments.length ? __slice.call(arguments, 0) : [];
+      if (this._triggers != null) {
+        return this._triggers.concat(triggers);
+      } else {
+        return this._triggers = triggers;
+      }
+    };
+
+    Validator.options = function() {
+      var options;
+      options = 1 <= arguments.length ? __slice.call(arguments, 0) : [];
+      if (this._options != null) {
+        return this._options.concat(options);
+      } else {
+        return this._options = options;
+      }
+    };
+
+    Validator.matches = function(options) {
+      var key, results, shouldReturn, value, _ref, _ref1;
+      results = {};
+      shouldReturn = false;
+      for (key in options) {
+        value = options[key];
+        if (~((_ref = this._options) != null ? _ref.indexOf(key) : void 0)) {
+          results[key] = value;
+        }
+        if (~((_ref1 = this._triggers) != null ? _ref1.indexOf(key) : void 0)) {
+          results[key] = value;
+          shouldReturn = true;
+        }
+      }
+      if (shouldReturn) {
+        return results;
+      }
+    };
+
     function Validator() {
       var mixins, options;
       options = arguments[0], mixins = 2 <= arguments.length ? __slice.call(arguments, 1) : [];
@@ -10543,30 +10578,9 @@
       return Batman.t("errors.messages." + messageKey, interpolations);
     };
 
-    Validator.options = function() {
-      var options;
-      options = 1 <= arguments.length ? __slice.call(arguments, 0) : [];
-      Batman.initializeObject(this);
-      if (this._batman.options) {
-        return this._batman.options.concat(options);
-      } else {
-        return this._batman.options = options;
-      }
-    };
-
-    Validator.matches = function(options) {
-      var key, results, shouldReturn, value, _ref, _ref1;
-      results = {};
-      shouldReturn = false;
-      for (key in options) {
-        value = options[key];
-        if (~((_ref = this._batman) != null ? (_ref1 = _ref.options) != null ? _ref1.indexOf(key) : void 0 : void 0)) {
-          results[key] = value;
-          shouldReturn = true;
-        }
-      }
-      if (shouldReturn) {
-        return results;
+    Validator.prototype.handleBlank = function(value) {
+      if (this.options.allowBlank && !Batman.PresenceValidator.prototype.isPresent(value)) {
+        return true;
       }
     };
 
@@ -10604,7 +10618,9 @@
 
     __extends(RegExpValidator, _super);
 
-    RegExpValidator.options('regexp', 'pattern');
+    RegExpValidator.triggers('regexp', 'pattern');
+
+    RegExpValidator.options('allowBlank');
 
     function RegExpValidator(options) {
       var _ref;
@@ -10615,10 +10631,11 @@
     RegExpValidator.prototype.validateEach = function(errors, record, key, callback) {
       var value;
       value = record.get(key);
-      if ((value != null) && value !== '') {
-        if (!this.regexp.test(value)) {
-          errors.add(key, this.format(key, 'not_matching'));
-        }
+      if (this.handleBlank(value)) {
+        return callback();
+      }
+      if (!(value != null) || value === '' || !this.regexp.test(value)) {
+        errors.add(key, this.format(key, 'not_matching'));
       }
       return callback();
     };
@@ -10643,15 +10660,19 @@
       return PresenceValidator.__super__.constructor.apply(this, arguments);
     }
 
-    PresenceValidator.options('presence');
+    PresenceValidator.triggers('presence');
 
     PresenceValidator.prototype.validateEach = function(errors, record, key, callback) {
       var value;
       value = record.get(key);
-      if (this.options.presence && (!(value != null) || value === '')) {
+      if (!this.isPresent(value)) {
         errors.add(key, this.format(key, 'blank'));
       }
       return callback();
+    };
+
+    PresenceValidator.prototype.isPresent = function(value) {
+      return (value != null) && value !== '';
     };
 
     return PresenceValidator;
@@ -10674,15 +10695,28 @@
       return NumericValidator.__super__.constructor.apply(this, arguments);
     }
 
-    NumericValidator.options('numeric');
+    NumericValidator.triggers('numeric');
+
+    NumericValidator.options('allowBlank');
 
     NumericValidator.prototype.validateEach = function(errors, record, key, callback) {
       var value;
       value = record.get(key);
-      if (this.options.numeric && isNaN(parseFloat(value))) {
+      if (this.handleBlank(value)) {
+        return callback();
+      }
+      if (!(value != null) || !(this.isNumeric(value) || this.canCoerceToNumeric(value))) {
         errors.add(key, this.format(key, 'not_numeric'));
       }
       return callback();
+    };
+
+    NumericValidator.prototype.isNumeric = function(value) {
+      return !isNaN(parseFloat(value)) && isFinite(value);
+    };
+
+    NumericValidator.prototype.canCoerceToNumeric = function(value) {
+      return (value - 0) == value && value.length > 0;
     };
 
     return NumericValidator;
@@ -10701,7 +10735,9 @@
 
     __extends(LengthValidator, _super);
 
-    LengthValidator.options('minLength', 'maxLength', 'length', 'lengthWithin', 'lengthIn');
+    LengthValidator.triggers('minLength', 'maxLength', 'length', 'lengthWithin', 'lengthIn');
+
+    LengthValidator.options('allowBlank');
 
     function LengthValidator(options) {
       var range;
@@ -10715,9 +10751,15 @@
     }
 
     LengthValidator.prototype.validateEach = function(errors, record, key, callback) {
-      var options, value, _ref;
+      var options, value;
       options = this.options;
-      value = (_ref = record.get(key)) != null ? _ref : [];
+      value = record.get(key);
+      if (value !== '' && this.handleBlank(value)) {
+        return callback();
+      }
+      if (value == null) {
+        value = [];
+      }
       if (options.minLength && value.length < options.minLength) {
         errors.add(key, this.format(key, 'too_short', {
           count: options.minLength
@@ -11042,8 +11084,11 @@
       return lhs || rhs;
     },
     not: function(value, binding) {
-      return !!!value;
+      return !value;
     },
+    trim: buntUndefined(function(value, binding) {
+      return value.trim();
+    }),
     matches: buntUndefined(function(value, searchFor) {
       return value.indexOf(searchFor) !== -1;
     }),
@@ -11099,7 +11144,7 @@
           count = void 0;
         }
       }
-      if (count) {
+      if (count != null) {
         return Batman.helpers.pluralize(count, string, void 0, includeCount);
       } else {
         return Batman.helpers.pluralize(string);
@@ -11415,6 +11460,31 @@
 
     __extends(View, _super);
 
+    View.YieldStorage = (function(_super1) {
+
+      __extends(YieldStorage, _super1);
+
+      function YieldStorage() {
+        return YieldStorage.__super__.constructor.apply(this, arguments);
+      }
+
+      YieldStorage.wrapAccessor(function(core) {
+        return {
+          get: function(key) {
+            var val;
+            val = core.get.call(this, key);
+            if (!(val != null)) {
+              val = this.set(key, []);
+            }
+            return val;
+          }
+        };
+      });
+
+      return YieldStorage;
+
+    })(Batman.Hash);
+
     View.store = new Batman.ViewStore();
 
     View.option = function() {
@@ -11448,10 +11518,6 @@
     View.prototype.cache = true;
 
     View.prototype._rendered = false;
-
-    View.prototype.source = '';
-
-    View.prototype.html = '';
 
     View.prototype.node = null;
 
@@ -11504,33 +11570,17 @@
       }
     });
 
-    View.YieldStorage = (function(_super1) {
-
-      __extends(YieldStorage, _super1);
-
-      function YieldStorage() {
-        return YieldStorage.__super__.constructor.apply(this, arguments);
-      }
-
-      YieldStorage.wrapAccessor(function(core) {
-        return {
-          get: function(key) {
-            var val;
-            val = core.get.call(this, key);
-            if (!(val != null)) {
-              val = this.set(key, []);
-            }
-            return val;
-          }
-        };
-      });
-
-      return YieldStorage;
-
-    })(Batman.Hash);
-
     View.accessor('yields', function() {
       return new this.constructor.YieldStorage;
+    });
+
+    View.accessor('fetched?', function() {
+      return this.get('source') != null;
+    });
+
+    View.accessor('readyToRender', function() {
+      var _ref;
+      return this.get('node') && (this.get('fetched?') ? ((_ref = this.get('html')) != null ? _ref.length : void 0) > 0 : true);
     });
 
     function View(options) {
@@ -11550,30 +11600,25 @@
       options.context = context.descend(this);
       View.__super__.constructor.call(this, options);
       Batman.Property.withoutTracking(function() {
-        var node;
-        if (node = _this.get('node')) {
-          return _this.render(node);
-        } else {
-          return _this.observeOnce('node', function(node) {
-            return _this.render(node);
-          });
-        }
+        return _this.observeAndFire('readyToRender', function(ready) {
+          if (ready) {
+            return _this.render();
+          }
+        });
       });
     }
 
-    View.prototype.render = function(node) {
-      var _this = this;
+    View.prototype.render = function() {
+      var node,
+        _this = this;
       if (this._rendered) {
         return;
       }
       this._rendered = true;
-      this.event('ready').resetOneShot();
-      if (node) {
-        this._renderer = new Batman.Renderer(node, this.context, this);
-        return this._renderer.on('rendered', function() {
-          return _this.fire('ready', node);
-        });
-      }
+      this._renderer = new Batman.Renderer(node = this.get('node'), this.get('context'), this);
+      return this._renderer.on('rendered', function() {
+        return _this.fire('ready', node);
+      });
     };
 
     View.prototype.isInDOM = function() {
